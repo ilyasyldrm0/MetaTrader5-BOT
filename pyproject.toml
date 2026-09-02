@@ -62,7 +62,11 @@ ignore = [
 "tests/*" = ["ARG001", "ARG002"]
 
 [tool.mypy]
-python_version = "3.11"
+# Deliberately no python_version pin. mypy would then analyse the *installed*
+# stubs under a language version they were not written for: numpy's stubs use
+# 3.12 `type` statements, so pinning 3.11 made mypy reject numpy's own syntax
+# on a 3.13 runner. Letting it follow the interpreter is correct, and the
+# floor is already stated by requires-python and ruff's target-version.
 strict = true
 warn_unreachable = true
 # The MetaTrader5 package ships no type stubs and cannot even be installed on
