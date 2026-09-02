@@ -100,7 +100,10 @@ class PaperBroker(Broker):
         self._entry_time: datetime | None = None
         self._entry_reason = ""
         self._tickets = itertools.count(1)
+        #: Every trade, kept for reporting at the end of a run.
         self.closed_trades: list[ClosedTrade] = []
+        #: The same trades, but cleared each time the engine collects them.
+        self._undrained: list[ClosedTrade] = []
 
     @property
     def name(self) -> str:
@@ -163,6 +166,10 @@ class PaperBroker(Broker):
             fill = bar_open if gapped else level
             self._settle(position, fill, pd.Timestamp(bar["time"]).to_pydatetime(), reason)
             return
+
+    def drain_closed_trades(self) -> list[ClosedTrade]:
+        finished, self._undrained = self._undrained, []
+        return finished
 
     # -- market data -------------------------------------------------------
 
@@ -312,6 +319,7 @@ class PaperBroker(Broker):
                 entry_reason=self._entry_reason,
             )
         )
+        self._undrained.append(self.closed_trades[-1])
         self._open = None
         self._entry_time = None
         self._entry_reason = ""
@@ -337,7 +345,10 @@ class DryRunBroker(Broker):
         self._balance_override = balance_override
         self._open: Position | None = None
         self._tickets = itertools.count(1)
+        #: Every trade, kept for reporting at the end of a run.
         self.closed_trades: list[ClosedTrade] = []
+        #: The same trades, but cleared each time the engine collects them.
+        self._undrained: list[ClosedTrade] = []
 
     @property
     def name(self) -> str:
@@ -361,6 +372,10 @@ class DryRunBroker(Broker):
                     self._settle(self._open, exit_price, tick.time, reason)
                     break
         return True
+
+    def drain_closed_trades(self) -> list[ClosedTrade]:
+        finished, self._undrained = self._undrained, []
+        return finished
 
     # -- reads pass straight through --------------------------------------
 
@@ -460,6 +475,7 @@ class DryRunBroker(Broker):
                 entry_reason=position.comment,
             )
         )
+        self._undrained.append(self.closed_trades[-1])
         self._open = None
 
 

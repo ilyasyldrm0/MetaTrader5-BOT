@@ -32,6 +32,7 @@ from mt5bot.brokers.base import BAR_COLUMNS, Broker
 from mt5bot.errors import BrokerError, DataUnavailableError
 from mt5bot.models import (
     Account,
+    ClosedTrade,
     OrderResult,
     Position,
     Side,
@@ -101,6 +102,8 @@ class Mt5Broker(Broker):
         self._max_retries = max(1, max_retries)
         self._mt5: ModuleType | None = None
         self._selected: set[str] = set()
+        self._seen: dict[int, Position] = {}
+        self._undrained: list[ClosedTrade] = []
 
     @property
     def name(self) -> str:
@@ -145,6 +148,7 @@ class Mt5Broker(Broker):
             self._mt5.shutdown()
             self._mt5 = None
             self._selected.clear()
+            self._seen.clear()
 
     # -- market data -------------------------------------------------------
 
@@ -252,7 +256,69 @@ class Mt5Broker(Broker):
             if code != 1:  # 1 == RES_S_OK, i.e. genuinely no positions
                 log.warning("positions_get failed: %s (code %s)", description, code)
             return []
-        return [self._to_position(p) for p in raw if int(p.magic) == self.magic]
+        found = [self._to_position(p) for p in raw if int(p.magic) == self.magic]
+        self._note_closures(found, symbol)
+        return found
+
+    def _note_closures(self, found: list[Position], symbol: str | None) -> None:
+        """Queue a journal entry for any position that has gone since last time.
+
+        A stop loss filling at the broker is invisible to the bot otherwise --
+        which is precisely how the original ended up holding a position id
+        that no longer referred to anything.
+
+        Comparison is scoped to the same symbol filter as the query, or
+        positions on other symbols would look as though they had vanished.
+        """
+        current = {p.ticket: p for p in found}
+        watched = {
+            ticket: position
+            for ticket, position in self._seen.items()
+            if symbol is None or position.symbol == symbol
+        }
+        for ticket, position in watched.items():
+            if ticket in current:
+                continue
+            del self._seen[ticket]
+            trade = self._closed_trade(position)
+            if trade is not None:
+                self._undrained.append(trade)
+            else:
+                log.warning("position #%d is gone but no closing deal was found in history", ticket)
+        self._seen.update(current)
+
+    def _closed_trade(self, position: Position) -> ClosedTrade | None:
+        """Rebuild a finished round trip from the terminal's deal history."""
+        deals = self.mt5.history_deals_get(position=position.ticket)
+        if not deals:
+            return None
+        # DEAL_ENTRY_OUT and DEAL_ENTRY_INOUT are the deals that reduce or
+        # reverse a position; there can be several if it closed in parts.
+        closing = [d for d in deals if int(d.entry) in (1, 2)]
+        if not closing:
+            return None
+
+        last = closing[-1]
+        # Commission and swap are what turn a nominal profit into the number
+        # that actually reached the balance.
+        profit = sum(float(d.profit) + float(d.commission) + float(d.swap) for d in closing)
+        return ClosedTrade(
+            ticket=position.ticket,
+            symbol=position.symbol,
+            side=position.side,
+            volume=position.volume,
+            price_open=position.price_open,
+            price_close=float(last.price),
+            time_open=position.time or datetime.fromtimestamp(int(last.time)),
+            time_close=datetime.fromtimestamp(int(last.time)),
+            profit=profit,
+            exit_reason="broker",
+            entry_reason=position.comment,
+        )
+
+    def drain_closed_trades(self) -> list[ClosedTrade]:
+        finished, self._undrained = self._undrained, []
+        return finished
 
     @staticmethod
     def _to_position(raw: Any) -> Position:

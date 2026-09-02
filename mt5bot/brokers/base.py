@@ -18,6 +18,7 @@ import pandas as pd
 
 from mt5bot.models import (
     Account,
+    ClosedTrade,
     OrderResult,
     Position,
     Side,
@@ -135,3 +136,13 @@ class Broker(ABC):
     @abstractmethod
     def close_position(self, position: Position, *, comment: str = "") -> OrderResult:
         """Close ``position`` at market."""
+
+    def drain_closed_trades(self) -> list[ClosedTrade]:
+        """Round trips finished since the last call, then forgotten.
+
+        The engine journals whatever this returns, so exits it did not itself
+        initiate -- a stop loss filling at the broker, a position closed by
+        hand in the terminal -- still reach the record. Returning nothing is a
+        valid answer for a venue that cannot report them.
+        """
+        return []
