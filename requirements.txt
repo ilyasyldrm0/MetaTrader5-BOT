@@ -1,0 +1,8 @@
+# Runtime dependencies for backtesting, paper trading and indicators.
+# Works on Windows, Linux and macOS.
+pandas>=2.0
+numpy>=1.24
+
+# Live trading against a MetaTrader 5 terminal additionally needs:
+#   pip install MetaTrader5
+# That package is Windows-only. See README.md for the Linux/macOS options.

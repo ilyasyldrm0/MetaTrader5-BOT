@@ -1,0 +1,92 @@
+# mt5bot configuration.
+#
+#   cp config.example.toml config.toml
+#   python main.py --config config.toml doctor
+#
+# Every value below is a default, so a key you do not care about can be
+# deleted. Unknown keys are rejected rather than ignored: a typo that silently
+# leaves a default in place is the config bug that costs the most.
+
+log_level    = "INFO"       # DEBUG | INFO | WARNING | ERROR
+log_dir      = "logs"       # null disables the log file
+journal_path = "journal.csv"  # closed trades, one row each; null disables
+
+
+[trading]
+symbol    = "EURUSD"
+timeframe = "M15"           # M1 M5 M15 M30 H1 H4 D1
+magic     = 234000          # tags this bot's orders; leave others alone
+deviation = 20              # slippage tolerance, in points
+# poll_seconds = 60         # unset derives it from the timeframe
+
+
+[strategy]
+rsi_period  = 14
+sma_period  = 12
+oversold    = 30.0
+overbought  = 70.0
+
+# How the moving average may veto an RSI signal:
+#
+#   "aligned"    buy only above the average, sell only below  (the original)
+#   "contrarian" buy only below the average, sell only above  (mean reversion)
+#   "off"        trade the RSI thresholds alone
+#
+# "aligned" is demanding. On the bundled 4,000-bar sample it produces zero
+# signals, because whatever drives RSI(14) under 30 has already pushed price
+# below a 12-period average. Run a backtest on your own data before assuming
+# the bot is broken -- and before assuming it is not.
+trend_filter = "aligned"
+
+# Fire only on the bar a threshold is crossed, rather than every bar the
+# reading stays beyond it.
+require_cross = false
+
+
+[risk]
+sl_pips = 25.0              # PIPS. Not price. This is the fix, not a rename.
+tp_pips = 50.0
+
+sizing       = "risk"       # "risk" sizes off the stop; "fixed" always sends fixed_lot
+risk_percent = 1.0          # with sizing = "risk": percent of balance lost at the stop
+fixed_lot    = 0.10         # with sizing = "fixed"
+
+max_spread_pips    = 3.0    # refuse to enter on a blown-out spread; null disables
+max_trades_per_day = 10     # circuit breaker against a flip-flopping strategy
+
+
+[terminal]
+# Leave all of this unset to attach to whatever account the running terminal is
+# already logged into -- the usual case, and the one with no secrets in a file.
+#
+# Credentials belong in the environment, not here. MT5_PATH, MT5_LOGIN,
+# MT5_PASSWORD and MT5_SERVER override anything set below. See .env.example.
+#
+# path     = "C:/Program Files/MetaTrader 5/terminal64.exe"
+# login    = 12345678
+# server   = "YourBroker-Demo"
+
+
+[symbol]
+# Contract details for backtesting, where there is no broker to ask. These
+# defaults describe a standard 5-digit EURUSD on a 100k contract.
+#
+# Run `python main.py doctor` against your own broker: it prints this block
+# filled in with the real numbers. Until then a backtest is sizing positions
+# for somebody else's account.
+digits            = 5
+point             = 1e-05
+volume_min        = 0.01
+volume_max        = 100.0
+volume_step       = 0.01
+trade_tick_value  = 1.0
+trade_tick_size   = 1e-05
+trade_stops_level = 0
+contract_size     = 100000.0
+
+
+[backtest]
+balance            = 10000.0
+spread_pips        = 1.0    # a zero-cost backtest is how losing strategies look good
+slippage_pips      = 0.0
+commission_per_lot = 0.0    # round turn, charged on exit
