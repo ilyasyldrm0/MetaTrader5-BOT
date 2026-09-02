@@ -122,3 +122,20 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# --- MetaTrader5-BOT ---
+# Local configuration may contain broker account numbers / server names.
+config.toml
+!config.example.toml
+
+# Runtime output
+logs/
+journal*.csv
+backtest-*.csv
+
+# Editors
+.idea/
+.vscode/
+
+# Tooling caches
+.ruff_cache/
