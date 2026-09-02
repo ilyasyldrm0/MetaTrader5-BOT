@@ -235,7 +235,7 @@ class TestNoLookAhead:
         """
         strategy = RsiSmaStrategy(trend_filter=TrendFilter.CONTRARIAN)
         history = bars_from(STEADY_DECLINE)
-        with_future = bars_from(STEADY_DECLINE + [200.0, 300.0, 400.0])
+        with_future = bars_from([*STEADY_DECLINE, 200.0, 300.0, 400.0])
 
         assert (
             strategy.evaluate(history).signal

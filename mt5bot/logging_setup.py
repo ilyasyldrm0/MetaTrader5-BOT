@@ -23,6 +23,11 @@ def configure_logging(level: str = "INFO", log_dir: str | Path | None = None) ->
     otherwise leaves a log nobody can open.
     """
     root = logging.getLogger()
+    # Close before discarding: clear() alone drops the reference and leaks the
+    # open file descriptor, which matters for a process that reconfigures
+    # logging more than once.
+    for handler in list(root.handlers):
+        handler.close()
     root.handlers.clear()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 

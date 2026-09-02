@@ -158,7 +158,7 @@ class TestRunBacktest:
         assert result.period_start < result.period_end
 
     def test_a_feed_shorter_than_the_warmup_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="needs \\d+ bars"):
+        with pytest.raises(ValueError, match=r"needs \d+ bars"):
             run_backtest(synthetic_feed(bars=20), Config())
 
     def test_it_writes_to_a_journal_when_given_one(self, tmp_path: Path) -> None:

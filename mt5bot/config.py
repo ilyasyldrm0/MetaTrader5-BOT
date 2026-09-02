@@ -205,7 +205,7 @@ class Config:
     def validate(self) -> None:
         """Check everything that cannot be expressed in the types themselves."""
         try:
-            self.timeframe
+            Timeframe.parse(self.trading.timeframe)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
 
