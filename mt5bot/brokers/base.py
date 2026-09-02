@@ -60,6 +60,20 @@ class Broker(ABC):
     def __exit__(self, *exc: object) -> None:
         self.shutdown()
 
+    def on_cycle(self) -> bool:
+        """Called by the engine at the top of every cycle.
+
+        A live broker has nothing to do here. A simulator uses it to advance
+        its own clock -- move to the next bar, fill any stop that the bar's
+        range touched -- and returns ``False`` once its feed runs out, which is
+        how the engine learns a replay has finished.
+
+        Doing it through a hook keeps the engine free of ``isinstance`` checks
+        and means the replay path exercises the same loop as live trading,
+        rather than a parallel one that can quietly drift out of step.
+        """
+        return True
+
     # -- market data -------------------------------------------------------
 
     @abstractmethod

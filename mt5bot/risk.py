@@ -34,6 +34,7 @@ __all__ = [
     "pips_to_price",
     "position_size",
     "price_to_pips",
+    "profit_of",
     "spread_pips",
     "stop_levels",
 ]
@@ -245,3 +246,21 @@ def spread_is_acceptable(tick: Tick, spec: SymbolSpec, max_pips: float | None) -
     if max_pips is None:
         return True
     return spread_pips(tick, spec) <= max_pips
+
+
+def profit_of(
+    spec: SymbolSpec,
+    side: Side,
+    volume: float,
+    entry: float,
+    exit_price: float,
+) -> float:
+    """Money made or lost on a round trip, in the account currency.
+
+    Converted through the same tick economics as :func:`lot_for_risk`, so a
+    simulated fill and the size that was risked on it agree by construction:
+    a position sized to lose 1% at its stop reports exactly that 1% when the
+    stop fills.
+    """
+    ticks = (exit_price - entry) * side.sign / spec.trade_tick_size
+    return ticks * spec.trade_tick_value * volume
