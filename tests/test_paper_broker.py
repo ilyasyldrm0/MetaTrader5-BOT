@@ -302,12 +302,18 @@ class TestAccounting:
         assert b.closed_trades[0].profit == pytest.approx(245.0 - 3.5)
 
     def test_closing_by_signal_is_recorded_as_such(self, eurusd: SymbolSpec) -> None:
+        """exit_reason is a category the report groups by, not free text.
+
+        Threading the caller's comment into it gave every strategy-driven exit
+        its own bucket, so the breakdown listed one row per RSI reading rather
+        than three totals.
+        """
         b = broker([FLAT] * 5, eurusd, spread_pips=1.0)
         b.on_cycle()
         b.open_position("EURUSD", Side.BUY, 0.1, comment="rsi flip")
         b.on_cycle()
         position = b.positions()[0]
-        assert b.close_position(position).ok
+        assert b.close_position(position, comment="RSI 71.2>=70").ok
 
         trade = b.closed_trades[0]
         assert trade.exit_reason == "signal"

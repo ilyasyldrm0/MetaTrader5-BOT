@@ -26,7 +26,7 @@ from enum import StrEnum
 
 import pandas as pd
 
-from mt5bot.indicators import sma, warmup_bars, wilder_rsi
+from mt5bot.indicators import warmup_bars, wilder_rsi_array
 from mt5bot.models import Side, Signal
 from mt5bot.strategy.base import Evaluation, Strategy
 
@@ -90,13 +90,17 @@ class RsiSmaStrategy(Strategy):
         return f"{self.name} -- " + "; ".join(parts)
 
     def evaluate(self, bars: pd.DataFrame) -> Evaluation:
-        close = bars["close"]
-        rsi = wilder_rsi(close, self.rsi_period)
-        average = sma(close, self.sma_period)
+        # Arrays, not Series: only the last reading (and the one before it, for
+        # require_cross) is ever read, and this runs once per bar over the whole
+        # of a backtest. Going through pandas here cost more than the arithmetic.
+        close = bars["close"].to_numpy(dtype=float, copy=False)
+        rsi = wilder_rsi_array(close, self.rsi_period)
 
-        last_rsi = float(rsi.iloc[-1])
-        last_sma = float(average.iloc[-1])
-        last_close = float(close.iloc[-1])
+        last_rsi = float(rsi[-1])
+        last_sma = (
+            float(close[-self.sma_period :].mean()) if close.size >= self.sma_period else math.nan
+        )
+        last_close = float(close[-1])
         readings = {"rsi": last_rsi, "sma": last_sma, "close": last_close}
 
         if not math.isfinite(last_rsi) or not math.isfinite(last_sma):
@@ -105,7 +109,7 @@ class RsiSmaStrategy(Strategy):
             # looks identical to "the market is quiet".
             return Evaluation(None, readings)
 
-        previous_rsi = float(rsi.iloc[-2]) if len(rsi) >= 2 else math.nan
+        previous_rsi = float(rsi[-2]) if rsi.size >= 2 else math.nan
 
         if self._triggered(last_rsi, previous_rsi, Side.BUY) and self._trend_allows(
             Side.BUY, last_close, last_sma

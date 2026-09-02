@@ -83,8 +83,16 @@ class PaperBroker(Broker):
         if len(feed) < 2:
             raise BrokerError(f"feed has {len(feed)} bars; need at least 2")
 
-        self._feed = feed.reset_index(drop=True)
+        # Normalised once, so every later access is a plain slice: selecting
+        # columns and rebuilding a row Series on each of several thousand
+        # cycles was a large share of a backtest's runtime.
+        self._feed = feed.loc[:, list(BAR_COLUMNS)].reset_index(drop=True)
         self.timeframe = infer_timeframe(self._feed)
+        self._times = self._feed["time"].to_numpy()
+        self._opens = self._feed["open"].to_numpy(dtype=float)
+        self._highs = self._feed["high"].to_numpy(dtype=float)
+        self._lows = self._feed["low"].to_numpy(dtype=float)
+        self._closes = self._feed["close"].to_numpy(dtype=float)
         self.spec = spec
         self.magic = magic
         self.starting_balance = balance
@@ -131,10 +139,10 @@ class PaperBroker(Broker):
         if self.finished:
             return False
         self._i += 1
-        self._apply_stops(self._feed.iloc[self._i])
+        self._apply_stops(self._i)
         return True
 
-    def _apply_stops(self, bar: pd.Series) -> None:
+    def _apply_stops(self, index: int) -> None:
         """Fill a stop loss or take profit that this bar's range reached.
 
         The stop is checked first, so a bar that touches both takes the loss.
@@ -149,9 +157,9 @@ class PaperBroker(Broker):
         # A long closes at the bid, which is what the bars quote; a short
         # closes at the ask, one spread above every bar price.
         offset = 0.0 if position.side is Side.BUY else self._spread
-        bar_open = float(bar["open"]) + offset
-        high = float(bar["high"]) + offset
-        low = float(bar["low"]) + offset
+        bar_open = self._opens[index] + offset
+        high = self._highs[index] + offset
+        low = self._lows[index] + offset
 
         for level, reason in ((position.sl, "sl"), (position.tp, "tp")):
             if level is None:
@@ -164,7 +172,7 @@ class PaperBroker(Broker):
             # does not hold a price the market jumped straight over.
             gapped = _reached(position.side, level, reason, bar_open)
             fill = bar_open if gapped else level
-            self._settle(position, fill, pd.Timestamp(bar["time"]).to_pydatetime(), reason)
+            self._settle(position, fill, self._time_at(index), reason)
             return
 
     def drain_closed_trades(self) -> list[ClosedTrade]:
@@ -195,18 +203,15 @@ class PaperBroker(Broker):
             raise DataUnavailableError(
                 f"replay has only reached bar {self._i + 1} of the feed, needed {count}"
             )
-        window = self._feed.iloc[self._i + 1 - count : self._i + 1]
-        return window.loc[:, list(BAR_COLUMNS)].reset_index(drop=True)
+        return self._feed.iloc[self._i + 1 - count : self._i + 1]
 
     def tick(self, symbol: str) -> Tick:
         self._require_symbol(symbol)
-        bar = self._feed.iloc[self._i]
-        bid = float(bar["close"])
-        return Tick(
-            time=pd.Timestamp(bar["time"]).to_pydatetime(),
-            bid=bid,
-            ask=bid + self._spread,
-        )
+        bid = float(self._closes[self._i])
+        return Tick(time=self._time_at(self._i), bid=bid, ask=bid + self._spread)
+
+    def _time_at(self, index: int) -> datetime:
+        return pd.Timestamp(self._times[index]).to_pydatetime()
 
     def account(self) -> Account:
         return Account(
@@ -289,13 +294,19 @@ class PaperBroker(Broker):
         return OrderResult(ok=True, ticket=ticket, price=fill, volume=volume, comment="paper fill")
 
     def close_position(self, position: Position, *, comment: str = "") -> OrderResult:
+        """Close at market. ``comment`` is accepted for interface parity; a
+        simulated venue has nowhere to record it."""
+        del comment
         if self._open is None or self._open.ticket != position.ticket:
             return OrderResult.failure(f"position {position.ticket} is not open")
 
         tick = self.tick(self._open.symbol)
         closing_side = self._open.side.opposite
         fill = tick.price_for(closing_side) + closing_side.sign * self._slippage
-        self._settle(self._open, fill, tick.time, comment or "signal")
+        # Always "signal": this is the category the report groups by, not a
+        # free-text note. Threading the caller's comment through here gave
+        # every exit its own bucket and made the breakdown unreadable.
+        self._settle(self._open, fill, tick.time, "signal")
         return OrderResult(ok=True, ticket=position.ticket, price=fill, comment="paper close")
 
     def _settle(self, position: Position, fill: float, when: datetime, exit_reason: str) -> None:
@@ -450,12 +461,13 @@ class DryRunBroker(Broker):
         return OrderResult(ok=True, ticket=ticket, price=fill, volume=volume, comment="dry run")
 
     def close_position(self, position: Position, *, comment: str = "") -> OrderResult:
+        del comment  # nothing is sent, so there is nowhere to attach it
         if self._open is None or self._open.ticket != position.ticket:
             return OrderResult.failure(f"position {position.ticket} is not open")
         tick = self._inner.tick(self._open.symbol)
         fill = tick.price_for(self._open.side.opposite)
         log.info("DRY RUN would close #%d at %s", position.ticket, fill)
-        self._settle(self._open, fill, tick.time, comment or "signal")
+        self._settle(self._open, fill, tick.time, "signal")
         return OrderResult(ok=True, ticket=position.ticket, price=fill, comment="dry run")
 
     def _settle(self, position: Position, fill: float, when: datetime, exit_reason: str) -> None:

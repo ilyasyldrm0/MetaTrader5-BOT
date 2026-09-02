@@ -21,7 +21,9 @@ __all__ = [
     "true_range",
     "warmup_bars",
     "wilder_rsi",
+    "wilder_rsi_array",
     "wilder_smooth",
+    "wilder_smooth_array",
 ]
 
 
@@ -42,6 +44,26 @@ def ema(values: pd.Series, period: int) -> pd.Series:
     return values.ewm(span=period, adjust=False, min_periods=period).mean()
 
 
+def wilder_smooth_array(values: np.ndarray, period: int) -> np.ndarray:
+    """:func:`wilder_smooth` on a raw array, without the pandas round trip."""
+    _check_period(period)
+    out = np.full(values.shape, np.nan, dtype=float)
+
+    finite = np.flatnonzero(~np.isnan(values))
+    if finite.size < period:
+        return out
+
+    start = int(finite[0])
+    seed_end = start + period  # exclusive
+    if seed_end > values.size:
+        return out
+
+    out[seed_end - 1] = values[start:seed_end].mean()
+    for i in range(seed_end, values.size):
+        out[i] = (out[i - 1] * (period - 1) + values[i]) / period
+    return out
+
+
 def wilder_smooth(values: pd.Series, period: int) -> pd.Series:
     """Wilder's smoothing (a.k.a. RMA / SMMA).
 
@@ -58,24 +80,34 @@ def wilder_smooth(values: pd.Series, period: int) -> pd.Series:
     Leading ``NaN`` values are skipped -- convenient, because the inputs are
     typically ``diff()`` or a true range, both of which start undefined.
     """
+    smoothed = wilder_smooth_array(values.to_numpy(dtype=float, copy=False), period)
+    return pd.Series(smoothed, index=values.index, name=values.name)
+
+
+def wilder_rsi_array(close: np.ndarray, period: int = 14) -> np.ndarray:
+    """:func:`wilder_rsi` on a raw array.
+
+    ``np.maximum`` rather than ``np.fmax``: the former propagates ``NaN``,
+    which is what keeps the undefined first difference undefined so the
+    smoothing skips it.
+    """
     _check_period(period)
-    arr = values.to_numpy(dtype=float, copy=False)
-    out = np.full(arr.shape, np.nan, dtype=float)
 
-    finite = np.flatnonzero(~np.isnan(arr))
-    if finite.size < period:
-        return pd.Series(out, index=values.index, name=values.name)
+    delta = np.empty(close.shape, dtype=float)
+    delta[0] = np.nan  # no previous close to difference against
+    delta[1:] = close[1:] - close[:-1]
 
-    start = int(finite[0])
-    seed_end = start + period  # exclusive
-    if seed_end > arr.size:
-        return pd.Series(out, index=values.index, name=values.name)
+    avg_gain = wilder_smooth_array(np.maximum(delta, 0.0), period)
+    avg_loss = wilder_smooth_array(np.maximum(-delta, 0.0), period)
 
-    out[seed_end - 1] = arr[start:seed_end].mean()
-    for i in range(seed_end, arr.size):
-        out[i] = (out[i - 1] * (period - 1) + arr[i]) / period
+    rsi = np.full(avg_gain.shape, np.nan, dtype=float)
+    ready = ~(np.isnan(avg_gain) | np.isnan(avg_loss))
 
-    return pd.Series(out, index=values.index, name=values.name)
+    falling = ready & (avg_loss > 0)
+    rsi[falling] = 100.0 - 100.0 / (1.0 + avg_gain[falling] / avg_loss[falling])
+    rsi[ready & (avg_loss == 0) & (avg_gain > 0)] = 100.0
+    rsi[ready & (avg_loss == 0) & (avg_gain == 0)] = 50.0
+    return rsi
 
 
 def wilder_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -91,23 +123,8 @@ def wilder_rsi(close: pd.Series, period: int = 14) -> pd.Series:
       ``NaN``, and a ``NaN`` compares ``False`` against every threshold, so the
       bot would silently stop signalling instead of reporting "no trend")
     """
-    _check_period(period)
-    delta = close.diff()
-    gain = delta.clip(lower=0.0)
-    loss = (-delta).clip(lower=0.0)
-
-    avg_gain = wilder_smooth(gain, period).to_numpy(dtype=float, copy=False)
-    avg_loss = wilder_smooth(loss, period).to_numpy(dtype=float, copy=False)
-
-    rsi = np.full(avg_gain.shape, np.nan, dtype=float)
-    ready = ~(np.isnan(avg_gain) | np.isnan(avg_loss))
-
-    falling = ready & (avg_loss > 0)
-    rsi[falling] = 100.0 - 100.0 / (1.0 + avg_gain[falling] / avg_loss[falling])
-    rsi[ready & (avg_loss == 0) & (avg_gain > 0)] = 100.0
-    rsi[ready & (avg_loss == 0) & (avg_gain == 0)] = 50.0
-
-    return pd.Series(rsi, index=close.index, name="rsi")
+    values = wilder_rsi_array(close.to_numpy(dtype=float, copy=False), period)
+    return pd.Series(values, index=close.index, name="rsi")
 
 
 def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
