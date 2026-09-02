@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from mt5bot.errors import ConfigError
-from mt5bot.models import Timeframe
+from mt5bot.models import SymbolSpec, Timeframe
 from mt5bot.strategy import RsiSmaStrategy, TrendFilter
 
 T = TypeVar("T")
@@ -94,6 +94,31 @@ class TerminalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SymbolConfig:
+    """Contract details used when there is no broker to ask.
+
+    A backtest still has to know what a pip is worth and what lot sizes are
+    legal. Live runs read all of this from the terminal; a CSV cannot supply
+    it, so it is configured here.
+
+    The defaults describe a standard 5-digit EURUSD on a 100k contract. They
+    are a reasonable starting point and a poor substitute for the real thing:
+    run ``mt5bot doctor`` against your own broker and paste the block it
+    prints, or the backtest will size positions for somebody else's account.
+    """
+
+    digits: int = 5
+    point: float = 0.00001
+    volume_min: float = 0.01
+    volume_max: float = 100.0
+    volume_step: float = 0.01
+    trade_tick_value: float = 1.0
+    trade_tick_size: float = 0.00001
+    trade_stops_level: int = 0
+    contract_size: float = 100_000.0
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestConfig:
     """Execution assumptions for simulated fills.
 
@@ -115,6 +140,7 @@ class Config:
     strategy: StrategyConfig = StrategyConfig()
     risk: RiskConfig = RiskConfig()
     terminal: TerminalConfig = TerminalConfig()
+    symbol: SymbolConfig = SymbolConfig()
     backtest: BacktestConfig = BacktestConfig()
     log_level: str = "INFO"
     log_dir: str | None = "logs"
@@ -138,6 +164,22 @@ class Config:
         if self.trading.poll_seconds is not None:
             return max(1, self.trading.poll_seconds)
         return max(5, min(60, self.timeframe.seconds // 15))
+
+    def symbol_spec(self) -> SymbolSpec:
+        """The configured contract, for use when no broker can be queried."""
+        c = self.symbol
+        return SymbolSpec(
+            symbol=self.trading.symbol,
+            digits=c.digits,
+            point=c.point,
+            volume_min=c.volume_min,
+            volume_max=c.volume_max,
+            volume_step=c.volume_step,
+            trade_tick_value=c.trade_tick_value,
+            trade_tick_size=c.trade_tick_size,
+            trade_stops_level=c.trade_stops_level,
+            contract_size=c.contract_size,
+        )
 
     def build_strategy(self) -> RsiSmaStrategy:
         s = self.strategy
@@ -278,6 +320,7 @@ _SECTIONS: dict[str, type] = {
     "RiskConfig": RiskConfig,
     "TerminalConfig": TerminalConfig,
     "BacktestConfig": BacktestConfig,
+    "SymbolConfig": SymbolConfig,
 }
 
 
